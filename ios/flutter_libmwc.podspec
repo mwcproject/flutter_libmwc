@@ -11,7 +11,7 @@ Binaries required to use flutter_libmwc in a Flutter project. This library provi
   DESC
   s.homepage         = 'https://github.com/mwcproject/flutter_libmwc'
   s.license          = { :type => 'MIT', :file => '../LICENSE' }
-  s.author           = { 'MWC Team' => 'team@mwcproject.org' }
+  s.author           = { 'MWC Team' => 'info@mwc.mw' }
 
   # Point to the GitHub repository and tag for the source
   s.source           = { :git => 'https://github.com/mwcproject/flutter_libmwc.git', :tag => s.version.to_s }
