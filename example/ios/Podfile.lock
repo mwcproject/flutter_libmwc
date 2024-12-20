@@ -26,7 +26,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   Flutter: e0871f40cf51350855a761d2e70bf5af5b9b5de7
-  flutter_libmwc: 18994bc36eb7c905a90782088232d6c23bfc7c0f
+  flutter_libmwc: 5b21216d176fa11b206a24f853ab8e1efb522e76
   flutter_secure_storage: 23fc622d89d073675f2eaa109381aefbcf5a49be
   path_provider_foundation: 2b6b4c569c0fb62ec74538f866245ac84301af46
 
