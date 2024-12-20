@@ -10,7 +10,7 @@ Pod::Spec.new do |s|
 Binaries required to use flutter_libmwc in a Flutter project. This library provides MWC wallet integration for Flutter apps, enabling wallet management, transactions, and more.
   DESC
   s.homepage         = 'https://github.com/mwcproject/flutter_libmwc'
-  s.license          = { :type => 'MIT', :file => '../LICENSE' }
+  s.license          = { :type => 'MIT', :file => 'LICENSE' }
   s.author           = { 'MWC Team' => 'info@mwc.mw' }
 
   # Point to the GitHub repository and tag for the source
