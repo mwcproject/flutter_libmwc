@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_libmwc'
-  s.version          = '0.0.1'
+  s.version          = '0.0.2'
   s.summary          = 'Binaries required to use flutter_libmwc in a Flutter project'
   s.description      = <<-DESC
 Binaries required to use flutter_libmwc in a Flutter project. This library provides MWC wallet integration for Flutter apps, enabling wallet management, transactions, and more.
