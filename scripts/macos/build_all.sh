@@ -1,32 +1,52 @@
 #!/usr/bin/env bash
-mkdir build
+
+# Exit immediately if any command fails
+set -e
+
+# Create a build directory
+mkdir -p build
 echo ''$(git log -1 --pretty=format:"%H")' '$(date) >> build/git_commit_version.txt
+
+# Paths for Dart versioning files
 VERSIONS_FILE=../../lib/git_versions.dart
 EXAMPLE_VERSIONS_FILE=../../lib/git_versions_example.dart
+
+# Copy example versions file if the main versions file doesn't exist
 if [ ! -f "$VERSIONS_FILE" ]; then
-    cp $EXAMPLE_VERSIONS_FILE $VERSIONS_FILE
+    cp "$EXAMPLE_VERSIONS_FILE" "$VERSIONS_FILE"
 fi
+
+# Update the Dart file with the latest Git commit hash
 COMMIT=$(git log -1 --pretty=format:"%H")
-OSX="OSX"
+OS="MACOS"
 sed -i '' "/\/\*${OS}_VERSION/c\\
 /*${OS}_VERSION*/ const ${OS}_VERSION = \"${COMMIT}\";" "$VERSIONS_FILE"
 
-#rm -rf build/rust/target/aarch64-apple-darwin/release #/libmwc_wallet.dylib
+# Sync the Rust project into the build directory, excluding the 'target' folder
 rsync -av --exclude='target' ../../rust/ build/rust/
 
+# Navigate to the Rust build directory
 cd build/rust
 
-# building
-#cbindgen src/lib.rs -l c > libmwc_wallet.h
-#cargo lipo --release --targets aarch64-apple-darwin
-cargo lipo --release #--target aarch64-apple-darwin
+# Add required Rust targets for macOS
+rustup target add x86_64-apple-darwin aarch64-apple-darwin
 
-# moving files to the ios project
-#inc=../../../../macos/include
-#libs=../../../../macos/libs
+# Build the Rust library for each macOS target
+cargo build --release --target x86_64-apple-darwin
+cargo build --release --target aarch64-apple-darwin
 
-outputs_dir=../../../../macos/Frameworks/MwcWallet.framework
+# Create the output directory for the framework
+OUTPUTS_DIR=../../../../macos/Frameworks/MwcWallet.framework
+mkdir -p "$OUTPUTS_DIR"
 
-#mkdir ${inc}
-#mkdir ${libs}
-cp target/aarch64-apple-darwin/release/libmwc_wallet.dylib ${outputs_dir}/MwcWallet
+# Combine the built libraries into a universal binary using lipo
+lipo -create \
+  target/x86_64-apple-darwin/release/libmwc_wallet.dylib \
+  target/aarch64-apple-darwin/release/libmwc_wallet.dylib \
+  -output "$OUTPUTS_DIR/MwcWallet"
+
+# Verify the created binary
+file "$OUTPUTS_DIR/MwcWallet"
+
+# Print a success message
+echo "Build and universal binary creation for macOS completed successfully!"
