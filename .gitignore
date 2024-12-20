@@ -31,11 +31,7 @@ build/
 rust/src/bin
 android/src/main/jniLibs/
 rust/default/
-ios/include/
-ios/libs/
-macos/include/
-macos/libs/
-rust/libepic_cash_wallet.h
+rust/libmwc_wallet.h
 lib/git_versions.dart
 
 scripts/windows/vcpkg/
