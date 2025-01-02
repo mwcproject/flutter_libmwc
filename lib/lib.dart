@@ -643,6 +643,108 @@ abstract class Libmwc {
   }
 
   ///
+  /// Private function wrapper for previewSlatepackMessage function
+  ///
+  static Future<String> _previewSlatepackMessageWrapper(
+    ({
+      String wallet,
+      String message,
+    }) data,
+  ) async {
+    return lib_mwc.previewSlatepackMessage(
+      data.wallet,
+      data.message,
+    );
+  }
+  
+  ///
+  /// Open an mwc wallet and preview a Slatepack message
+  ///
+  static Future<String> previewSlatepackMessage({
+    required String wallet,
+    required String message,
+  }) async {
+    try {
+      return await compute(_previewSlatepackMessageWrapper, (
+        wallet: wallet,
+        message: message,
+      ));
+    } catch (e) {
+      throw Exception("Error previewing Slatepack message: ${e.toString()}");
+    }
+  }
+
+
+  ///
+  /// Private function for txHttpSend function
+  ///
+  static Future<String> _txSlatepackSendWrapper(
+    ({
+      String wallet,
+      int selectionStrategyIsAll,
+      int minimumConfirmations,
+      String message,
+      int amount,
+      String address,
+    }) data,
+  ) async {
+    return lib_mwc.txHttpSend(
+      data.wallet,
+      data.selectionStrategyIsAll,
+      data.minimumConfirmations,
+      data.message,
+      data.amount,
+      data.address,
+    );
+  }
+
+
+  ///
+  ///
+  ///
+  static Future<({String commitId, String slateId})> txSlatepackSend({
+  required String wallet,
+  required int selectionStrategyIsAll,
+  required int minimumConfirmations,
+  required String message,
+  required int amount,
+  required String address,
+}) async {
+  try {
+    // Offload the computation-heavy function to a separate isolate using compute.
+    var result = await compute(_txSlatepackSendWrapper, (
+      wallet: wallet,
+      selectionStrategyIsAll: selectionStrategyIsAll,
+      minimumConfirmations: minimumConfirmations,
+      message: message,
+      amount: amount,
+      address: address,
+    ));
+
+    // Check for errors in the result
+    if (result.toUpperCase().contains("ERROR")) {
+      throw Exception("Error creating transaction: ${result.toString()}");
+    }
+
+    // Decode the JSON response to extract relevant data
+    final decodedResult = jsonDecode(result);
+    final transactionDetails = jsonDecode(decodedResult[0] as String);
+    final slateData = jsonDecode(transactionDetails[0] as String);
+    final txDetails = jsonDecode(transactionDetails[1] as String);
+
+    // Extract slateId and commitId
+    ({String slateId, String commitId}) data = (
+      slateId: slateData['tx_slate_id'] as String,
+      commitId: txDetails['tx']['body']['outputs'][0]['commit'] as String,
+    );
+
+    return data;
+  } catch (e) {
+    throw Exception("Error sending transaction: ${e.toString()}");
+  }
+}
+  
+  ///
   /// Private function for txHttpSend function
   ///
   static Future<String> _txHttpSendWrapper(

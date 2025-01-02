@@ -16,11 +16,13 @@ if [ ! -f "$VERSIONS_FILE" ]; then
     cp "$EXAMPLE_VERSIONS_FILE" "$VERSIONS_FILE"
 fi
 
-# Update the Dart file with the latest Git commit hash
+# Get the latest Git commit hash
 COMMIT=$(git log -1 --pretty=format:"%H")
-OS="MACOS"
-sed -i '' "/\/\*${OS}_VERSION/c\\
-/*${OS}_VERSION*/ const ${OS}_VERSION = \"${COMMIT}\";" "$VERSIONS_FILE"
+
+# Update MACOS_VERSION and clean up the line before WINDOWS_VERSION
+sed -i '' -e "/\/\*MACOS_VERSION/c\\
+/*MACOS_VERSION*/ const MACOS_VERSION = \"${COMMIT}\";" \
+-e "/\/\*WINDOWS_VERSION/ s/^.*\/\*WINDOWS_VERSION/\/*WINDOWS_VERSION/" "$VERSIONS_FILE"
 
 # Sync the Rust project into the build directory, excluding the 'target' folder
 rsync -av --exclude='target' ../../rust/ build/rust/

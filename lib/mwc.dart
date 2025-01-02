@@ -1,3 +1,4 @@
+
 import 'dart:ffi';
 import 'dart:io' as io;
 
@@ -82,6 +83,8 @@ typedef AddressInfoFFI = Pointer<Utf8> Function(
 typedef ValidateAddress = Pointer<Utf8> Function(Pointer<Utf8>);
 typedef ValidateAddressFFI = Pointer<Utf8> Function(Pointer<Utf8>);
 
+
+
 typedef TransactionFees = Pointer<Utf8> Function(
     Pointer<Utf8>, Pointer<Int8>, Pointer<Int8>);
 typedef TransactionFeesFFI = Pointer<Utf8> Function(
@@ -96,6 +99,11 @@ typedef OpenWalletFFI = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
 typedef TxHttpSend = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Int8>,
     Pointer<Int8>, Pointer<Utf8>, Pointer<Int8>, Pointer<Utf8>);
 typedef TxHttpSendFFI = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Int8>,
+    Pointer<Int8>, Pointer<Utf8>, Pointer<Int8>, Pointer<Utf8>);
+
+typedef TxSlatepackSend = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Int8>,
+    Pointer<Int8>, Pointer<Utf8>, Pointer<Int8>, Pointer<Utf8>);
+typedef TxSlatepackSendFFI = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Int8>,
     Pointer<Int8>, Pointer<Utf8>, Pointer<Int8>, Pointer<Utf8>);
 
 final WalletMnemonic _walletMnemonic = mwcNative
@@ -250,6 +258,28 @@ String validateSendAddress(String address) {
   return _validateSendAddress(address.toNativeUtf8()).toDartString();
 }
 
+typedef PreviewSlatepack = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
+typedef PreviewSlatepackFFI = Pointer<Utf8> Function(Pointer<Utf8>, Pointer<Utf8>);
+
+final PreviewSlatepack _previewSlatepackMessage = mwcNative
+    .lookup<NativeFunction<PreviewSlatepackFFI>>("rust_preview_slatepack")
+    .asFunction();
+
+/// Function to preview a Slatepack message and parse the JSON result
+String previewSlatepackMessage(String wallet, String message) {
+  try {
+    // Call the FFI function
+    final resultPointer = _previewSlatepackMessage(wallet.toNativeUtf8(), message.toNativeUtf8());
+    final resultString = resultPointer.toDartString();
+
+    // Return the raw JSON result string for further processing
+    return resultString;
+  } catch (e) {
+    // Handle any potential errors gracefully
+    throw Exception("Error decoding Slatepack preview: ${e.toString()}");
+  }
+}
+
 final TransactionFees _transactionFees = mwcNative
     .lookup<NativeFunction<TransactionFeesFFI>>("rust_get_tx_fees")
     .asFunction();
@@ -302,7 +332,26 @@ Future<String> txHttpSend(
       .toDartString();
 }
 
+final TxSlatepackSend _txSlatepackSend = mwcNative
+    .lookup<NativeFunction<TxSlatepackSendFFI>>("rust_tx_send_slatepack")
+    .asFunction();
 
+Future<String> txSlatepackSend(
+    String wallet,
+    int selectionStrategyIsAll,
+    int minimumConfirmations,
+    String message,
+    int amount,
+    String address) async {
+  return _txSlatepackSend(
+      wallet.toNativeUtf8(),
+      selectionStrategyIsAll.toString().toNativeUtf8().cast<Int8>(),
+      minimumConfirmations.toString().toNativeUtf8().cast<Int8>(),
+      message.toNativeUtf8(),
+      amount.toString().toNativeUtf8().cast<Int8>(),
+      address.toNativeUtf8())
+      .toDartString();
+}
 
 
 

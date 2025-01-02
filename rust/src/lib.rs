@@ -4,6 +4,7 @@ use std::ffi::{CString, CStr, c_void};
 use std::path::Path;
 use std::sync::Arc;
 use rand::thread_rng;
+use rustc_serialize::json::decode;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -12,22 +13,21 @@ use mwc_wallet_config::{WalletConfig, MQSConfig};
 use mwc_wallet_libwallet::api_impl::types::{InitTxArgs, InitTxSendArgs};
 use mwc_wallet_libwallet::api_impl::owner;
 use mwc_wallet_impls::{DefaultLCProvider, DefaultWalletImpl, MWCMQSAddress, Address, AddressType, HTTPNodeClient};
-
 use mwc_keychain::mnemonic;
 use mwc_wallet_util::mwc_core::global::ChainTypes;
 use mwc_wallet_util::mwc_core::global;
 use mwc_util::file::get_first_line;
 use mwc_wallet_util::mwc_util::ZeroingString;
 use mwc_util::Mutex;
-use mwc_wallet_libwallet::{scan, wallet_lock, NodeClient, WalletInst, WalletLCProvider, Error, proof::proofaddress as proofaddress};
+use mwc_wallet_libwallet::{scan, Slate, SlatePurpose, SlateVersion, VersionedSlate, wallet_lock, NodeClient, WalletInst, WalletLCProvider, Error, proof::proofaddress as proofaddress};
 use mwc_wallet_controller::{controller, Error as MWCWalletControllerError};
-
+use mwc_wallet_libwallet::proof::proofaddress::ProvableAddress;
 use mwc_wallet_util::mwc_keychain::{Keychain, ExtKeychain};
 
 use mwc_util::secp::rand::Rng;
 use mwc_util::init_logger as mwc_wallet_init_logger;
 use mwc_util::logger::LoggingConfig;
-use mwc_util::secp::key::SecretKey;
+use mwc_util::secp::key::{self, SecretKey};
 use ed25519_dalek::{PublicKey as DalekPublicKey, SecretKey as DalekSecretKey};
 use android_logger::FilterBuilder;
 use mwc_wallet_impls::Subscriber;
@@ -516,7 +516,7 @@ pub unsafe extern "C" fn rust_create_tx(
 
     let tuple_wallet_data: (i64, Option<SecretKey>) = serde_json::from_str(wallet_data).unwrap();
 
-    let listen = Listener {
+    let _listen = Listener {
         wallet_ptr_str: wallet_data.to_string(),
         mwcmqs_config: mwcmqs_config.parse().unwrap()
     };
@@ -827,6 +827,248 @@ fn _delete_wallet(
     Ok(p)
 
 }
+#[no_mangle]
+pub unsafe extern "C" fn rust_preview_slatepack(
+    wallet: *const c_char,
+    message: *const c_char,
+) -> *const c_char {
+    let c_wallet = CStr::from_ptr(wallet);
+    let wallet_data = c_wallet.to_str().unwrap();
+    let tuple_wallet_data: (i64, Option<SecretKey>) = serde_json::from_str(wallet_data).unwrap();
+    let wlt = tuple_wallet_data.0;
+    let sek_key = tuple_wallet_data.1;
+    ensure_wallet!(wlt, wallet);
+
+    let c_message = CStr::from_ptr(message);
+    let message_str = c_message.to_str().unwrap();
+
+    match preview_slatepack(wallet, sek_key, message_str.to_string()) {
+        Ok(json_result) => {
+            let c_string = CString::new(json_result).unwrap();
+            let ptr = c_string.as_ptr();
+            std::mem::forget(c_string);
+            ptr
+        }
+        Err(err) => {
+            let error_msg = format!("Error: {}", err);
+            let error_msg_ptr = CString::new(error_msg).unwrap();
+            let ptr = error_msg_ptr.as_ptr();
+            std::mem::forget(error_msg_ptr);
+            ptr
+        }
+    }
+}
+
+fn preview_slatepack(
+    wallet: &Wallet,
+    keychain_mask: Option<SecretKey>,
+    message: String,
+) -> Result<String, Error> {
+    let api = Owner::new(wallet.clone(), None, None);
+
+    let decoded_slatepack = api.decrypt_slatepack(
+        keychain_mask.as_ref(),
+        VersionedSlate::SP(message),
+        Some(0),
+    );
+
+    match decoded_slatepack {
+        Ok((slate, purpose, sender_pub_key, recipient_pub_key)) => {
+            // Serialize the tuple into a JSON object
+            let preview_data = serde_json::to_string(&serde_json::json!({
+                "slate": slate,
+                "purpose": purpose,
+                "sender_pub_key": sender_pub_key.map(|pk| ProvableAddress::from_tor_pub_key(&pk)),
+                "recipient_pub_key": recipient_pub_key.map(|pk| ProvableAddress::from_tor_pub_key(&pk))
+            }))
+            .map_err(|e| Error::GenericError(e.to_string()))?;
+            Ok(preview_data)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+
+#[no_mangle]
+pub unsafe extern "C" fn rust_tx_send_slatepack(
+    wallet: *const c_char,
+    selection_strategy_is_use_all: *const c_char,
+    minimum_confirmations: *const c_char,
+    message: *const c_char,
+    amount: *const c_char,
+    address: *const c_char,
+) -> *const c_char  {
+    let c_wallet = CStr::from_ptr(wallet);
+    let c_strategy_is_use_all = CStr::from_ptr(selection_strategy_is_use_all);
+    let strategy_is_use_all: u64 = c_strategy_is_use_all.to_str().unwrap().to_string().parse().unwrap();
+    let strategy_use_all = match strategy_is_use_all {
+        0 => false,
+        _=> true
+    };
+    let c_minimum_confirmations = CStr::from_ptr(minimum_confirmations);
+    let minimum_confirmations: u64 = c_minimum_confirmations.to_str().unwrap().to_string().parse().unwrap();
+    let c_message = CStr::from_ptr(message);
+    let str_message = c_message.to_str().unwrap();
+    let c_amount = CStr::from_ptr(amount);
+    let amount: u64 = c_amount.to_str().unwrap().to_string().parse().unwrap();
+    let c_address = CStr::from_ptr(address);
+    let str_address = c_address.to_str().unwrap();
+
+    let wallet_data = c_wallet.to_str().unwrap();
+    let tuple_wallet_data: (i64, Option<SecretKey>) = serde_json::from_str(wallet_data).unwrap();
+    let wlt = tuple_wallet_data.0;
+    let sek_key = tuple_wallet_data.1;
+    ensure_wallet!(wlt, wallet);
+
+    let result = match _tx_send_slatepack(
+        wallet,
+        sek_key,
+        strategy_use_all,
+        minimum_confirmations,
+        str_message,
+        amount,
+        str_address
+    ) {
+        Ok(tx_data) => {
+            tx_data
+        }, Err(err ) => {
+            let error_msg = format!("Error {}", &err.to_string());
+            let error_msg_ptr = CString::new(error_msg).unwrap();
+            let ptr = error_msg_ptr.as_ptr(); // Get a pointer to the underlaying memory for s
+            std::mem::forget(error_msg_ptr);
+            ptr
+        }
+    };
+    result
+}
+
+fn _tx_send_slatepack(
+    wallet: &Wallet,
+    keychain_mask: Option<SecretKey>,
+    selection_strategy_is_use_all: bool,
+    minimum_confirmations: u64,
+    message: &str,
+    amount: u64,
+    address: &str
+) -> Result<*const c_char, Error> {
+    let mut send_result = String::from("");
+    match tx_send_slatepack(
+        wallet,
+        keychain_mask,
+        selection_strategy_is_use_all,
+        minimum_confirmations,
+        message,
+        amount,
+        address
+    ) {
+        Ok(sent) => {
+            let empty_json = format!(r#"{{"slate_msg": ""}}"#);
+            let create_response = (&sent, &empty_json);
+            let str_create_response = serde_json::to_string(&create_response).unwrap();
+            send_result.push_str(&str_create_response);
+        },
+        Err(err) => {
+            return Err(err);
+        },
+    }
+    let s = CString::new(send_result).unwrap();
+    let p = s.as_ptr(); // Get a pointer to the underlaying memory for s
+    std::mem::forget(s); // Give up the responsibility of cleaning up/freeing s
+    Ok(p)
+}
+
+
+pub fn tx_send_slatepack(
+    wallet: &Wallet,
+    keychain_mask: Option<SecretKey>,
+    selection_strategy_is_use_all: bool,
+    minimum_confirmations: u64,
+    message: &str,
+    amount: u64,
+    address: &str
+) -> Result<String, Error> {
+    let api = Owner::new(wallet.clone(), None, None);
+
+    // Handle optional message
+    let message = if message.is_empty() { None } else { Some(message.to_string()) };
+
+    // Parse recipient address
+    let slatepack_recipient: Option<ProvableAddress> = if address.is_empty() {
+        None
+    } else {
+        Some(ProvableAddress::from_str(address).map_err(|e| {
+            Error::GenericError(format!("Unable to parse slatepack_recipient, {}", e))
+        })?)
+    };
+
+    // Prepare transaction arguments
+    let args = InitTxArgs {
+        src_acct_name: Some("default".to_string()),
+        amount,
+        minimum_confirmations,
+        max_outputs: 500,
+        num_change_outputs: 1,
+        selection_strategy_is_use_all,
+        message,
+        slatepack_recipient: slatepack_recipient.clone(),
+        target_slate_version: Some(4),  // Wrap in Some()
+        ..Default::default()
+    };
+
+    // Initialize transaction
+    match api.init_send_tx(keychain_mask.as_ref(), &args, 1) {
+        Ok(slate) => {
+            println!("{}", "CREATE_TX_SLATEPACK_SUCCESS");
+
+            // Handle recipient tor address if available
+            let recipient = slatepack_recipient.as_ref().map(|recipient| {
+                recipient.tor_public_key().map_err(|e| {
+                    Error::SlatepackEncodeError(format!("Expecting recipient tor address, {}", e))
+                })
+            }).transpose()?;
+
+            // Encrypt the slate
+            let encoded_slatepack = api.encrypt_slate(
+                keychain_mask.as_ref(),
+                &slate,
+                Some(SlateVersion::SP),
+                SlatePurpose::SendInitial,
+                recipient.clone(),
+                None,
+                false,
+            );
+
+            // Handle encoded slatepack result
+            match encoded_slatepack {
+                Ok(vs) => {
+                    // Lock outputs
+                    api.tx_lock_outputs(keychain_mask.as_ref(), &slate, None, 0).map_err(|e| {
+                        Error::SlatepackEncodeError(format!("Failed to lock outputs: {}", e))
+                    })?;
+
+                    // Retrieve transaction details
+                    let txs = api.retrieve_txs(keychain_mask.as_ref(), false, None, Some(slate.id), None)
+                        .map_err(|e| e)?;
+
+                    // Prepare transaction data
+                    let tx_data = (
+                        serde_json::to_string(&txs.1).unwrap(),
+                        serde_json::to_string(&vs).unwrap()
+                    );
+
+                    let str_tx_data = serde_json::to_string(&tx_data).unwrap();
+                    Ok(str_tx_data)
+                }
+                Err(e) => Err(e),
+            }
+        }
+        Err(err) => {
+            println!("CREATE_TX_ERROR_IN_SLATEPACK_SEND {}", err.to_string());
+            Err(err)
+        }
+    }
+}
+
 
 #[no_mangle]
 pub unsafe extern "C" fn rust_tx_send_http(
@@ -915,6 +1157,73 @@ fn _tx_send_http(
     std::mem::forget(s); // Give up the responsibility of cleaning up/freeing s
     Ok(p)
 }
+
+pub fn tx_send_http(
+    wallet: &Wallet,
+    keychain_mask: Option<SecretKey>,
+    selection_strategy_is_use_all: bool,
+    minimum_confirmations: u64,
+    message: &str,
+    amount: u64,
+    address: &str,
+) -> Result<String, Error>{
+    let api = Owner::new(wallet.clone(), None, None);
+    let message = match message {
+        "" => None,
+        _ => Some(message.to_string()),
+    };
+    let init_send_args = InitTxSendArgs {
+        method: "http".to_string(),
+        dest: address.to_string(),
+        finalize: true,
+        post_tx: true,
+        fluff: true,
+        apisecret: None
+    };
+
+    let args = InitTxArgs {
+        src_acct_name: Some("default".to_string()),
+        amount,
+        minimum_confirmations,
+        max_outputs: 500,
+        num_change_outputs: 1,
+        selection_strategy_is_use_all,
+        message: message,
+        send_args: Some(init_send_args),
+        ..Default::default()
+    };
+
+    match api.init_send_tx(keychain_mask.as_ref(), &args, 1) {
+        Ok(slate) => {
+            println!("{}", "CREATE_TX_SUCCESS");
+            //Get transaction for slate, for UI display
+            let txs = match api.retrieve_txs(
+                keychain_mask.as_ref(),
+                false,
+                None,
+                Some(slate.id),
+                None
+            ) {
+                Ok(txs_result) => {
+                    txs_result
+                }, Err(e) => {
+                    return Err(e);
+                }
+            };
+
+            let tx_data = (
+                serde_json::to_string(&txs.1).unwrap(),
+                serde_json::to_string(&slate).unwrap()
+            );
+            let str_tx_data = serde_json::to_string(&tx_data).unwrap();
+            Ok(str_tx_data)
+        } Err(err) => {
+            println!("CREATE_TX_ERROR_IN_HTTP_SEND {}", err.to_string());
+            return  Err(err);
+        }
+    }
+}
+
 
 #[no_mangle]
 pub unsafe extern "C" fn rust_get_wallet_address(
@@ -1768,71 +2077,6 @@ pub fn delete_wallet(config: Config) -> Result<String, Error> {
     Ok(result)
 }
 
-pub fn tx_send_http(
-    wallet: &Wallet,
-    keychain_mask: Option<SecretKey>,
-    selection_strategy_is_use_all: bool,
-    minimum_confirmations: u64,
-    message: &str,
-    amount: u64,
-    address: &str,
-) -> Result<String, Error>{
-    let api = Owner::new(wallet.clone(), None, None);
-    let message = match message {
-        "" => None,
-        _ => Some(message.to_string()),
-    };
-    let init_send_args = InitTxSendArgs {
-        method: "http".to_string(),
-        dest: address.to_string(),
-        finalize: true,
-        post_tx: true,
-        fluff: true,
-        apisecret: None
-    };
-
-    let args = InitTxArgs {
-        src_acct_name: Some("default".to_string()),
-        amount,
-        minimum_confirmations,
-        max_outputs: 500,
-        num_change_outputs: 1,
-        selection_strategy_is_use_all,
-        message: message,
-        send_args: Some(init_send_args),
-        ..Default::default()
-    };
-
-    match api.init_send_tx(keychain_mask.as_ref(), &args, 1) {
-        Ok(slate) => {
-            println!("{}", "CREATE_TX_SUCCESS");
-            //Get transaction for slate, for UI display
-            let txs = match api.retrieve_txs(
-                keychain_mask.as_ref(),
-                false,
-                None,
-                Some(slate.id),
-                None
-            ) {
-                Ok(txs_result) => {
-                    txs_result
-                }, Err(e) => {
-                    return Err(e);
-                }
-            };
-
-            let tx_data = (
-                serde_json::to_string(&txs.1).unwrap(),
-                serde_json::to_string(&slate).unwrap()
-            );
-            let str_tx_data = serde_json::to_string(&tx_data).unwrap();
-            Ok(str_tx_data)
-        } Err(err) => {
-            println!("CREATE_TX_ERROR_IN_HTTP_SEND {}", err.to_string());
-            return  Err(err);
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct Listener {
@@ -1845,8 +2089,8 @@ pub struct Listener {
 impl Task for Listener {
     type Output = usize;
 
-    fn run(&self, cancel_tok: &CancellationToken) -> Result<Self::Output, anyhow::Error> {
-        let mut spins = 0;
+    fn run(&self, _cancel_tok: &CancellationToken) -> Result<Self::Output, anyhow::Error> {
+        let spins = 0;
         let tuple_wallet_data: (i64, Option<SecretKey>) = serde_json::from_str(&self.wallet_ptr_str)?;
         let wlt = tuple_wallet_data.0;
         let sek_key = tuple_wallet_data.1;
